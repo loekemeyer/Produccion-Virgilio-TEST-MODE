@@ -1,0 +1,1503 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#1e6bd6">
+<title>Reporte Empleados</title>
+<!-- PWA: manifiesto + ícono. Permite "Agregar a pantalla de inicio" en Chrome
+     Android y mejora la fiabilidad del Background Sync del Service Worker. -->
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+
+<style>
+body { font-family: Arial, sans-serif; margin: 0; padding: 12px; }
+.hidden { display: none; }
+
+button {
+  width: 100%;
+  padding: 16px;
+  font-size: 22px;
+  margin-top: 14px;
+  border-radius: 6px;
+}
+
+.primary-btn { background: #1e6bd6; color: white; border: none; }
+
+/* ---------- PANTALLA LEGAJO ---------- */
+#legajoScreen h1 { font-size: 36px; text-align: center; }
+#legajoInput { width: 100%; font-size: 34px; padding: 12px; text-align: center; border: 6px solid; }
+
+/* 👇 espacio donde se verá el historial (ACHICADO) */
+#legajoHistorySpace{
+  margin-top: 12px;
+  min-height: 25vh;
+  border-radius: 10px;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+/* Estilo del historial */
+.history-title{
+  font-size: 18px;
+  font-weight: bold;
+  text-align: center;
+  margin-bottom: 10px;
+}
+.history-item{
+  border: 2px solid #333;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.history-item .line1{
+  font-size: 18px;
+  font-weight: bold;
+}
+.history-item .line2{
+  margin-top: 4px;
+  font-size: 14px;
+  color: #333;
+  word-break: break-word;
+}
+.history-empty{
+  font-size: 16px;
+  text-align: center;
+  color: #666;
+  margin-top: 18px;
+}
+
+.row { display: grid; gap: 8px; margin-top: 13px; }
+.row-6 { grid-template-columns: repeat(6, 1fr); }
+.row-5 { grid-template-columns: repeat(5, 1fr); }
+.row-4 { grid-template-columns: repeat(4, 1fr); }
+
+.box { border: 2px solid #333; padding: 8px 4px; text-align: center; cursor: pointer; }
+.box-title { font-size: 18px; font-weight: bold; }
+.box-desc { font-size: 10px; margin-top: 3px; }
+
+.top-bar { display: flex; align-items: center; margin-bottom: 6px; }
+.back-top { font-size: 28px; cursor: pointer; }
+
+.selected-container { display: flex; align-items: center; justify-content: center; margin-top: 16px; }
+.back-arrow { font-size: 32px; cursor: pointer; margin-right: 10px; }
+.selected-box { border: 2px solid #333; padding: 10px 22px; font-size: 28px; font-weight: bold; color: #1e6bd6; }
+.selected-desc { margin-left: 12px; font-size: 18px; font-weight: bold; }
+
+.label { margin-top: 14px; font-size: 22px; text-align: center; white-space: pre-line; }
+.text-input { width: 100%; height: 68px; font-size: 64px ; border:6px solid ; text-align: center; margin-top: 8px; text-transform: uppercase; }
+.text-input::placeholder { font-size: 26px; color: #aaa; }
+
+.error { color: red; margin-top: 10px; font-size: 18px; text-align: center; }
+.small { font-size: 14px; color: #666; text-align:center; margin-top:6px; }
+.aviso-label{
+ margin-top:10px;
+ padding:8px 12px;
+ background:#fff3cd;
+ border:1px solid #ffeeba;
+ border-radius:6px;
+ font-size:30px;
+ text-align:center;
+}
+
+/* ✅ deshabilitado visual */
+.box.disabled{
+  background:#ddd;
+  color:#888;
+  border-color:#aaa;
+  pointer-events:none;
+  opacity:0.6;
+}
+
+/* ⚠ tarea pendiente: hay un EP/AP o toggle abierto sin cerrar.
+   El botón correspondiente queda con borde rojo. Si está además
+   disabled (por bloqueo), gana el borde rojo igual. */
+.box.pending{
+  border-color: #d33;
+  background: #fff5f5;
+}
+.box.disabled.pending,
+.box.pending.disabled{
+  border-color: #d33;
+  background: #ddd;
+}
+
+/* ✅ aviso de reportes pendientes (se reintenta solo en background) */
+#pendingIndicator{
+  display: none;
+  margin-top: 12px;
+  padding: 12px;
+  background: #ffe0e0;
+  border: 2px solid #d33;
+  border-radius: 8px;
+  font-size: 18px;
+  text-align: center;
+  color: #900;
+  font-weight: bold;
+}
+
+/* Resumen de hoy: lista scrolleable con todos los reportes del día */
+.history-list{
+  max-height: 360px;
+  overflow-y: auto;
+  text-align: left;
+}
+
+/* Botón flotante 📅 (historial de días anteriores) */
+#btnHistDias{
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 2px solid #cbd5e1;
+  background: #f8fafc;
+  font-size: 22px;
+  cursor: pointer;
+  z-index: 100;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Override del .hidden global: el ID es más específico que la clase,
+   así que sin esta regla el botón queda visible en la pantalla de tareas. */
+#btnHistDias.hidden { display: none; }
+
+/* Modal de historial de días anteriores */
+#histModal{
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 200;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px 8px;
+  overflow-y: auto;
+}
+#histModal.show{ display: flex; }
+.hist-modal-card{
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px;
+  width: 100%;
+  max-width: 600px;
+  max-height: 92vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+.hist-modal-header{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  position: sticky;
+  top: 0;
+  background: #fff;
+  padding-bottom: 8px;
+}
+.hist-modal-title{ font-size: 18px; font-weight: bold; }
+.hist-modal-close{
+  background: #eee;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 16px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.hist-day-block{
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.hist-day-title{
+  font-size: 16px;
+  font-weight: bold;
+  margin-bottom: 8px;
+  color: #1e6bd6;
+}
+.hist-day-item{
+  font-size: 14px;
+  padding: 6px 0;
+  border-top: 1px solid #f0f0f0;
+}
+.hist-day-item:first-child{ border-top: none; }
+
+/* Badge de estado por reporte (queued / sent / failed) */
+.status-badge{
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: bold;
+  margin-left: 6px;
+  vertical-align: middle;
+  line-height: 1.3;
+}
+.status-sent   { background: #d1fae5; color: #065f46; }
+.status-failed { background: #fee2e2; color: #991b1b; }
+.status-queued { background: #fef3c7; color: #92400e; }
+
+/* Badge de versión y estado de sincronización (esquina inferior derecha) */
+#versionBadge{
+  position: fixed;
+  bottom: 8px;
+  right: 8px;
+  z-index: 50;
+  font-size: 12px;
+  font-weight: bold;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: #f0fdf4;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+  pointer-events: none;        /* no se puede tocar; es solo visual */
+  font-family: monospace;
+}
+#versionBadge.pending{
+  background: #fffbeb;
+  color: #92400e;
+  border-color: #fde68a;
+}
+#versionBadge.error{
+  background: #fef2f2;
+  color: #991b1b;
+  border-color: #fecaca;
+}
+</style>
+</head>
+
+<body>
+
+<!-- Botón flotante: historial de días anteriores -->
+<button id="btnHistDias" title="Historial de días anteriores">📅</button>
+
+<!-- Badge de versión + estado de cola (abajo a la derecha) -->
+<div id="versionBadge">v1.8 ✓</div>
+
+<!-- Modal: historial de días anteriores (oculto por defecto) -->
+<div id="histModal" onclick="if(event.target.id==='histModal') closeHistoryModal()">
+  <div class="hist-modal-card">
+    <div class="hist-modal-header">
+      <div class="hist-modal-title">Historial de días anteriores</div>
+      <button class="hist-modal-close" onclick="closeHistoryModal()">Cerrar</button>
+    </div>
+    <div id="histModalContent"></div>
+  </div>
+</div>
+
+<!-- ================= LEGAJO ================= -->
+<div id="legajoScreen">
+  <h1>Ingresá tu número de legajo</h1>
+  <input id="legajoInput" type="number" inputmode="numeric">
+
+  <button class="primary-btn" onclick="goToOptions()">Continuar</button>
+
+  <!-- Aviso: hay reportes que aún no se enviaron -->
+  <div id="pendingIndicator"></div>
+
+  <!-- 👇 espacio para historial -->
+  <div id="legajoHistorySpace">
+    <div class="history-title">Resumen de hoy</div>
+    <div id="legajoHistoryContent" class="history-empty">Ingresá tu legajo para ver el resumen</div>
+  </div>
+
+  <div class="small" id="status"></div>
+  <div id="legajoError" class="error"></div>
+</div>
+
+<!-- ================= OPCIONES ================= -->
+<div id="optionsScreen" class="hidden">
+
+  <div class="top-bar">
+    <div class="back-top" onclick="backToLegajo()">←</div>
+  </div>
+
+  <div class="row row-6" id="row1"></div>
+  <div class="row row-5" id="row2"></div>
+  <div class="row row-5" id="row3"></div>
+  <div id="pendingSuggestion"></div>
+
+  <div id="selectedArea" class="hidden">
+
+    <div class="selected-container">
+      <div class="back-arrow" onclick="resetSelection()">←</div>
+      <div id="selectedBox" class="selected-box"></div>
+      <div id="selectedDesc" class="selected-desc"></div>
+    </div>
+    <div id="aviso" class="hidden aviso-label"></div>
+    <div id="inputArea" class="hidden">
+      <div id="inputLabel" class="label"></div>
+      <input id="textInput" class="text-input">
+    </div>
+
+    <button id="sendBtn" class="primary-btn" onclick="send()">Enviar</button>
+    <div id="error" class="error"></div>
+
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   SUPABASE
+   Org "Gestion Productiva" / Proyecto "Control Partes Talleristas".
+   La publishable key es pública por diseño (va embebida en la HTML
+   servida por GitHub Pages). La RLS permite SOLO INSERT con esta key.
+   ========================================================= */
+const SUPABASE_URL  = "https://hrxfctzncixxqmpfhskv.supabase.co";
+const SUPABASE_KEY  = "sb_publishable_BqpAgZH6ty-9wft10_YMhw_0rcIPuWT";
+const SUPABASE_TABLE_ENDPOINT =
+  SUPABASE_URL + "/rest/v1/Registros_Produccion_Virgilio";
+
+const filas = {
+  row1: ["EP","TP","AP","TAP","CR","CC"],
+  row2: ["RT","MG","RI","EI","CT"],
+  row3: ["AT","PB","Limp","Perm","PC"]
+};
+
+const desc = {
+  EP:"Empecé Picking", TP:"Fin Picking", AP:"Empecé Armado Pedido",
+  TAP:"Terminé Armado Pedido", CR:"Control Remitos", CC:"Inicio/Fin Carga Camión",
+  RT:"Recepción Mercadería", MG:"Guardado a Góndola",
+  RI:"Recepción Insumos", EI:"Entrega Insumos",
+  AT:"Atendí Timbre", PB:"Paré Baño", Limp:"Limpieza",
+  Perm:"Permiso de Salida", PC:"Paré Comida",CT:"Conteo"
+};
+
+let selected = null;
+
+/* =========================================================
+   STORAGE LOCAL — versiones e identificadores
+   ========================================================= */
+const STATE_KEY       = "legajo_state_virgilio_v1";
+const HIST_V2_PREFIX  = "legajo_hist_virgilio_v2";        // keys: <prefix>::AAAA-MM-DD::<legajo>
+const DAY_GUARD_KEY   = "legajo_day_guard_virgilio_v1";   // última fecha vista (hora Arg)
+const LAST_LEGAJO_KEY = "legajo_last_virgilio_v1";        // último legajo usado en este celular
+
+const TZ_AR           = "America/Argentina/Buenos_Aires";
+const MAX_PROD_DAYS   = 10;        // se retienen N días PRODUCTIVOS (con datos), no calendario
+const HIST_MAX_PER_DAY = 700;      // tope de reportes por día por legajo en localStorage
+const SURVIVING_TOGGLES = ["CR","MG"]; // únicos toggles que sobreviven al cambio de día
+
+/* Auto-cierre al fin de jornada para toggles abiertos que quedaron sin cerrar.
+   Si la limpieza del día siguiente encuentra alguno de estos abierto, genera
+   un registro de cierre con ts_cliente = fin de jornada del día en que se abrió. */
+const WORKDAY_END_HOUR_AR = 17;    // 17:00 hora Argentina (la jornada termina ahí)
+const AUTO_CLOSE_CODES    = ["AT","PB","Limp","PC","CT","Perm"];
+
+/* =========================================================
+   FECHA / TIMESTAMP
+   ========================================================= */
+function getTodayKey() {
+  // YYYY-MM-DD en hora de Buenos Aires (independiente de la TZ del dispositivo)
+  const d = new Date(new Date().toLocaleString("en-US", { timeZone: TZ_AR }));
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,"0");
+  const dd = String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${dd}`;
+}
+function formatDateTime(ts) {
+  try { return new Date(ts).toLocaleString("es-AR"); }
+  catch { return ""; }
+}
+function formatDayLong(fecha) {
+  const p = fecha.split("-");
+  return `${p[2]}/${p[1]}/${p[0]}`;
+}
+
+/* "YYYY-MM-DD" en hora Argentina, a partir de un ISO o ms. */
+function isoToDayKey(isoOrMs) {
+  const ts = typeof isoOrMs === "number" ? isoOrMs : new Date(isoOrMs).getTime();
+  const d = new Date(new Date(ts).toLocaleString("en-US", { timeZone: TZ_AR }));
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,"0");
+  const dd = String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${dd}`;
+}
+
+/* Date para el FIN DE JORNADA Argentina (WORKDAY_END_HOUR_AR:00) del día
+   correspondiente al ts dado. Argentina no usa DST, así que UTC-3 fijo. */
+function endOfWorkdayArgFor(isoOrMs) {
+  const dayKey = isoToDayKey(isoOrMs);
+  const hh = String(WORKDAY_END_HOUR_AR).padStart(2,"0");
+  return new Date(`${dayKey}T${hh}:00:00-03:00`);
+}
+
+/* Escapa HTML para evitar inyección al renderizar via innerHTML.
+   El campo "texto" lo escribe el operario y podría contener < > & etc. */
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/* =========================================================
+   ÚLTIMO LEGAJO (persistente entre cierres de app)
+   Se guarda al confirmar "Continuar" y se precarga al abrir.
+   Si otro operario quiere usar el mismo celular: solo borra y reescribe.
+   ========================================================= */
+function saveLastLegajo(legajo) {
+  try { localStorage.setItem(LAST_LEGAJO_KEY, String(legajo || "")); } catch {}
+}
+function readLastLegajo() {
+  try { return localStorage.getItem(LAST_LEGAJO_KEY) || ""; }
+  catch { return ""; }
+}
+
+/* =========================================================
+   HISTORIAL POR DÍA Y LEGAJO
+   - Una key por (fecha, legajo). El "Resumen de hoy" es el array de hoy.
+   - El modal 📅 muestra todos los días anteriores con datos.
+   ========================================================= */
+function histKey(fecha, legajo) {
+  return `${HIST_V2_PREFIX}::${fecha}::${legajo}`;
+}
+function readDayHist(fecha, legajo) {
+  try { return JSON.parse(localStorage.getItem(histKey(fecha, legajo)) || "[]"); }
+  catch { return []; }
+}
+function writeDayHist(fecha, legajo, arr) {
+  try { localStorage.setItem(histKey(fecha, legajo), JSON.stringify(arr)); } catch {}
+}
+function pushHistoryForLegajo(legajo, item) {
+  pushHistoryForLegajoOnDay(legajo, getTodayKey(), item);
+}
+/* Idem pero escribiendo en la fecha que se pase explícitamente.
+   Lo usa el auto-cierre, que escribe en la fecha en que se abrió el toggle. */
+function pushHistoryForLegajoOnDay(legajo, fecha, item) {
+  const arr = readDayHist(fecha, legajo);
+  arr.unshift({ ...item, status: item.status || "queued" });
+  if (arr.length > HIST_MAX_PER_DAY) arr.length = HIST_MAX_PER_DAY;
+  writeDayHist(fecha, legajo, arr);
+}
+
+/* Marca un item del historial como sent / failed / queued.
+   - sentAtIso: hora en que el cliente recibió la confirmación.
+   - createdAtIso: timestamp REAL del INSERT en Supabase (server clock). */
+function setHistoryItemStatus(legajo, fecha, itemId, status, sentAtIso, createdAtIso) {
+  if (!legajo || !fecha || !itemId) return false;
+  const arr = readDayHist(fecha, legajo);
+  const i = arr.findIndex(it => it.id === itemId);
+  if (i < 0) return false;
+  arr[i].status = status;
+  if (sentAtIso)    arr[i].sentAt    = sentAtIso;
+  if (createdAtIso) arr[i].createdAt = createdAtIso;
+  writeDayHist(fecha, legajo, arr);
+  return true;
+}
+
+/* Pintar el badge según el status del item. */
+function statusBadge(status) {
+  if (status === "sent")   return ` <span class="status-badge status-sent">✓ enviado</span>`;
+  if (status === "failed") return ` <span class="status-badge status-failed">⚠ falló</span>`;
+  if (status === "queued") return ` <span class="status-badge status-queued">⏳ en cola</span>`;
+  return "";
+}
+function getAllPrevDaysForLegajo(legajo) {
+  const today = getTodayKey();
+  const result = []; // [{ fecha, items }]
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (!k || !k.startsWith(HIST_V2_PREFIX + "::")) continue;
+    const parts = k.split("::");
+    if (parts.length !== 3) continue;
+    if (parts[2] !== legajo || parts[1] === today) continue;
+    try {
+      const items = JSON.parse(localStorage.getItem(k) || "[]");
+      if (items.length) result.push({ fecha: parts[1], items });
+    } catch {}
+  }
+  result.sort((a,b) => b.fecha.localeCompare(a.fecha));
+  return result;
+}
+
+function renderLegajoHistory(legajo) {
+  const container = document.getElementById("legajoHistoryContent");
+  if (!legajo) {
+    container.className = "history-empty";
+    container.innerText = "Ingresá tu legajo para ver el resumen";
+    return;
+  }
+  const hist = readDayHist(getTodayKey(), String(legajo));
+  if (!hist.length) {
+    container.className = "history-empty";
+    container.innerText = "No hay reportes hoy para este legajo en este dispositivo.";
+    return;
+  }
+  // Orden defensivo: más reciente arriba, más viejo abajo.
+  hist.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  container.className = "history-list";
+  container.innerHTML = hist.map(h => {
+    // "Llegó al server" usa createdAt (si Supabase lo devolvió) o sentAt
+    // (la hora en que el cliente recibió la confirmación 201, que para
+    // efectos prácticos es cuando llegó a Supabase).
+    const arrived = h.createdAt || h.sentAt;
+    return `
+      <div class="history-item">
+        <div class="line1">${escapeHtml(h.opcion)} — ${escapeHtml(h.descripcion)}${statusBadge(h.status)}</div>
+        <div class="line2">
+          ${h.texto ? `Dato: <b>${escapeHtml(h.texto)}</b><br>` : ""}
+          ${h.ts ? `Fecha: ${escapeHtml(formatDateTime(h.ts))}` : ""}
+          ${arrived ? `<br>Llegó al server: ${escapeHtml(formatDateTime(arrived))}` : ""}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+/* =========================================================
+   LIMPIEZA AL CAMBIAR DE DÍA
+   1) Retiene los últimos N días PRODUCTIVOS (los que tienen datos),
+      no se cuentan días sin trabajo.
+   2) Borra del estado los toggles que NO sobreviven al día siguiente:
+      todos menos "CR" y "MG". Picking y armado quedan intactos.
+   Nunca toca lo que ya se mandó a Supabase.
+   ========================================================= */
+function cleanupIfDayChanged() {
+  const today = getTodayKey();
+  const last  = localStorage.getItem(DAY_GUARD_KEY);
+  if (last === today) return;
+
+  // (1) Retención de N días productivos
+  const dates = new Set();
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (!k || !k.startsWith(HIST_V2_PREFIX + "::")) continue;
+    const parts = k.split("::");
+    if (parts.length === 3) dates.add(parts[1]);
+  }
+  const keep = new Set(
+    Array.from(dates).sort((a,b) => b.localeCompare(a)).slice(0, MAX_PROD_DAYS)
+  );
+  const toDelete = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (!k || !k.startsWith(HIST_V2_PREFIX + "::")) continue;
+    const parts = k.split("::");
+    if (parts.length === 3 && !keep.has(parts[1])) toDelete.push(k);
+  }
+  toDelete.forEach(k => localStorage.removeItem(k));
+
+  // (2) Auto-cierre + limpieza de toggles que NO sobreviven al día siguiente.
+  //     Antes de borrar el flag de localStorage, si el toggle está en
+  //     AUTO_CLOSE_CODES y tiene ts_inicio guardado, encolamos un cierre
+  //     automático con ts_cliente = fin de jornada del día en que se abrió.
+  const map = readStateMap();
+  for (const leg of Object.keys(map)) {
+    const st = map[leg];
+    if (!st || !st.toggles) continue;
+    for (const code of Object.keys(st.toggles)) {
+      if (SURVIVING_TOGGLES.includes(code)) continue;
+      const cur = st.toggles[code];
+      const tsInicioIso = (typeof cur === "string") ? cur : null;
+      if (tsInicioIso && AUTO_CLOSE_CODES.includes(code)) {
+        try { enqueueAutoClose(leg, code, tsInicioIso); } catch {}
+      }
+      delete st.toggles[code];
+    }
+  }
+  writeStateMap(map);
+
+  localStorage.setItem(DAY_GUARD_KEY, today);
+}
+
+/* =========================================================
+   MODAL "Historial de días anteriores"
+   ========================================================= */
+function openHistoryModal() {
+  const legajoStr = String(legajoInput.value || "").trim();
+  if (!legajoStr) { alert("Ingresá tu legajo primero"); return; }
+  const previas = getAllPrevDaysForLegajo(legajoStr);
+  const content = document.getElementById("histModalContent");
+  if (!previas.length) {
+    content.innerHTML = `<div class="history-empty">No hay reportes de días anteriores guardados en este dispositivo para el legajo ${escapeHtml(legajoStr)}.</div>`;
+  } else {
+    // Orden defensivo dentro de cada día: más reciente arriba.
+    previas.forEach(d => d.items.sort((a, b) => (b.ts || 0) - (a.ts || 0)));
+    content.innerHTML = previas.map(d => `
+      <div class="hist-day-block">
+        <div class="hist-day-title">${escapeHtml(formatDayLong(d.fecha))} (${d.items.length})</div>
+        ${d.items.map(it => {
+          const arrived = it.createdAt || it.sentAt;
+          return `
+            <div class="hist-day-item">
+              <b>${escapeHtml(it.opcion)}</b> — ${escapeHtml(it.descripcion)}${statusBadge(it.status)}
+              ${it.texto ? ` — <i>${escapeHtml(it.texto)}</i>` : ""}
+              ${it.ts ? `<br><span style="color:#666;font-size:12px;">${escapeHtml(formatDateTime(it.ts))}</span>` : ""}
+              ${arrived ? `<br><span style="color:#666;font-size:12px;">Llegó al server: ${escapeHtml(formatDateTime(arrived))}</span>` : ""}
+            </div>
+          `;
+        }).join("")}
+      </div>
+    `).join("");
+  }
+  document.getElementById("histModal").classList.add("show");
+}
+function closeHistoryModal() {
+  document.getElementById("histModal").classList.remove("show");
+}
+
+/* Live render historial al tipear legajo */
+let legajoTimer = null;
+legajoInput.addEventListener("input", () => {
+  clearTimeout(legajoTimer);
+  legajoTimer = setTimeout(() => {
+    renderLegajoHistory(legajoInput.value);
+    updateCoreButtonsState();
+    renderPendingSuggestion();
+  }, 150);
+});
+
+/* =========================================================
+   ESTADO por legajo:
+   - picking: { active, value }  (EP->TP)
+   - armado:  { active, value }  (AP->TAP)
+   - toggles: { CR:true, AT:true, ... } (1ra vez inicia, 2da termina)
+   ========================================================= */
+const CORE_CODES   = ["EP","TP","AP","TAP"];
+const TOGGLE_CODES = ["CR","CC","RT","MG","RI","EI","AT","PB","Limp","PC","Perm","CT"];
+
+/* Códigos de TIEMPO MUERTO. Cuando uno está abierto, se bloquea todo lo
+   demás hasta cerrarlo (tocando el mismo botón otra vez). El resto de
+   los toggles (CR, MG, CC, RT, RI, EI, Perm) NO bloquean. */
+const DEAD_TIME_CODES = ["AT","PB","Limp","PC","CT"];
+
+/* Botones SIEMPRE tocables — no se les aplica NINGUNA regla de bloqueo
+   impuesta por otras tareas. Caso de uso: el operario está en limpieza
+   y necesita ir al baño / a comer; al volver, sigue limpieza. */
+const ALWAYS_ALLOWED_CODES = ["PB","PC"];
+
+function readStateMap(){
+  try { return JSON.parse(localStorage.getItem(STATE_KEY)) || {}; }
+  catch { return {}; }
+}
+function writeStateMap(map){
+  localStorage.setItem(STATE_KEY, JSON.stringify(map));
+}
+function getLegajoState(legajo){
+  const map = readStateMap();
+  const key = String(legajo || "");
+  if (!map[key]) {
+    map[key] = { picking: {active:false,value:""}, armado:{active:false,value:""}, toggles:{} };
+    writeStateMap(map);
+  } else {
+    map[key].picking = map[key].picking || {active:false,value:""};
+    map[key].armado  = map[key].armado  || {active:false,value:""};
+    map[key].toggles = map[key].toggles || {};
+  }
+  return map[key];
+}
+function setLegajoState(legajo, newState){
+  const map = readStateMap();
+  map[String(legajo || "")] = newState;
+  writeStateMap(map);
+}
+function isToggleEnding(legajo, code){
+  if (!TOGGLE_CODES.includes(code)) return false;
+  const st = getLegajoState(legajo);
+  return !!st.toggles[code];
+}
+function toggleStartOrEnd(legajo, code){
+  const st = getLegajoState(legajo);
+  const wasActive = !!st.toggles[code];
+  if (wasActive) {
+    delete st.toggles[code];
+  } else {
+    // Guarda el ts de apertura como ISO string; truthiness sigue funcionando.
+    st.toggles[code] = new Date().toISOString();
+  }
+  setLegajoState(legajo, st);
+  return { started: !wasActive, ended: wasActive };
+}
+
+/* =========================================================
+   BLOQUEO: si hay cualquier toggle activo (no-core), NO se puede seleccionar EP/TP/AP/TAP
+   + deshabilitado visual
+   ========================================================= */
+/* Cualquier toggle abierto (regla VIEJA: bloquea EP/TP/AP/TAP). */
+function getAnyToggleActive(legajo){
+  const st = getLegajoState(legajo);
+  if (!st.toggles) return null;
+  const keys = Object.keys(st.toggles);
+  return keys[0] || null;
+}
+
+/* Tiempo muerto abierto (regla NUEVA: bloquea TODO menos el mismo botón).
+   Solo AT, PB, Limp, PC y CT. */
+function getActiveDeadTime(legajo){
+  const st = getLegajoState(legajo);
+  if (!st.toggles) return null;
+  for (const code of DEAD_TIME_CODES) {
+    if (st.toggles[code]) return code;
+  }
+  return null;
+}
+
+/* Aplica las dos reglas:
+   - Si hay tiempo muerto activo: TODOS los botones quedan deshabilitados
+     menos el mismo botón del tiempo muerto (para poder cerrarlo).
+   - Si NO hay tiempo muerto pero sí hay algún toggle activo (CR, MG, etc):
+     solo se deshabilitan EP/TP/AP/TAP, los demás botones quedan tocables.
+   - PB y PC nunca se deshabilitan (siempre tocables).
+   - Además, marca con borde rojo (.pending) los botones que correspondan
+     a tareas abiertas sin cerrar. */
+function updateCoreButtonsState(){
+  const legajoStr = String(legajoInput.value || "");
+  const deadTime  = getActiveDeadTime(legajoStr);
+  const anyToggle = getAnyToggleActive(legajoStr);
+  const st        = legajoStr ? getLegajoState(legajoStr) : null;
+  const pickingActive = !!(st && st.picking && st.picking.active);
+  const armadoActive  = !!(st && st.armado  && st.armado.active);
+
+  document.querySelectorAll(".box").forEach(b=>{
+    const code = b.querySelector(".box-title")?.innerText?.trim();
+    if (!code) return;
+
+    // ===== DISABLED =====
+    let disabled = false;
+    if (ALWAYS_ALLOWED_CODES.includes(code)) {
+      disabled = false;                                           // PB/PC siempre tocables
+    } else if (deadTime && code !== deadTime) {
+      disabled = true;                                            // regla nueva
+    } else if (CORE_CODES.includes(code) && anyToggle) {
+      disabled = true;                                            // regla vieja
+    }
+    b.classList.toggle("disabled", disabled);
+
+    // ===== PENDING (borde rojo) =====
+    let pending = false;
+    if ((code === "EP" || code === "TP") && pickingActive) pending = true;
+    else if ((code === "AP" || code === "TAP") && armadoActive) pending = true;
+    else if (TOGGLE_CODES.includes(code) && st && st.toggles && st.toggles[code]) pending = true;
+    b.classList.toggle("pending", pending);
+  });
+}
+
+/* =========================================================
+   SUGERENCIA (SOLO Picking/Armado)
+   ========================================================= */
+function ensurePendingSuggestionContainer(){
+  let box = document.getElementById("pendingSuggestion");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "pendingSuggestion";
+    const row3El = document.getElementById("row3");
+    if (row3El && row3El.parentNode) row3El.parentNode.insertBefore(box, row3El.nextSibling);
+  }
+  return box;
+}
+
+function renderPendingSuggestion(){
+  const legajo = String(legajoInput.value || "");
+  const box = ensurePendingSuggestionContainer();
+  box.innerHTML = "";
+  if(!legajo) return;
+
+  // Si hay CUALQUIER toggle activo, EP/TP/AP/TAP están bloqueados;
+  // ocultar la sugerencia (no se podría tocar igual).
+  if (getAnyToggleActive(legajo)) return;
+
+  const st = getLegajoState(legajo);
+
+  // PICKING
+  if (st.picking && st.picking.active && st.picking.value) {
+    const btn = document.createElement("button");
+    btn.className = "primary-btn";
+    btn.innerText = `Tenés un Picking pendiente (${st.picking.value}) — Presioná para terminar`;
+    btn.onclick = ()=>{
+      selectOption("TP");
+      textInput.value = st.picking.value || "";
+    };
+    box.appendChild(btn);
+    return;
+  }
+
+  // ARMADO
+  if (st.armado && st.armado.active && st.armado.value) {
+    const btn = document.createElement("button");
+    btn.className = "primary-btn";
+    btn.innerText = `Tenés un Armado pendiente (${st.armado.value}) — Presioná para terminar`;
+    btn.onclick = ()=>{
+      selectOption("TAP");
+      textInput.value = st.armado.value || "";
+    };
+    box.appendChild(btn);
+    return;
+  }
+}
+
+/* =========================================================
+   ARMADO DE BOTONES
+   ========================================================= */
+Object.keys(filas).forEach(rowId => {
+  filas[rowId].forEach(code => {
+    const d = document.createElement("div");
+    d.className = "box";
+    d.innerHTML = `
+      <div class="box-title">${code}</div>
+      <div class="box-desc">${desc[code]}</div>
+    `;
+    d.onclick = () => selectOption(code);
+    document.getElementById(rowId).appendChild(d);
+  });
+});
+
+/* =========================================================
+   NAVEGACIÓN
+   ========================================================= */
+function goToOptions() {
+  if (!legajoInput.value) return alert("Ingresá el número de legajo");
+  saveLastLegajo(legajoInput.value);    // persistir para próximas aperturas
+  legajoScreen.classList.add("hidden");
+  optionsScreen.classList.remove("hidden");
+  document.getElementById("btnHistDias")?.classList.add("hidden");
+  renderPendingSuggestion();
+  updateCoreButtonsState();
+}
+
+function backToLegajo() {
+  optionsScreen.classList.add("hidden");
+  legajoScreen.classList.remove("hidden");
+  document.getElementById("btnHistDias")?.classList.remove("hidden");
+  renderLegajoHistory(legajoInput.value);
+}
+
+function selectOption(code) {
+  const legajoStr = String(legajoInput.value || "");
+
+  // Excepción: PB y PC siempre se pueden tocar — no aplican reglas de bloqueo.
+  if (!ALWAYS_ALLOWED_CODES.includes(code)) {
+    // Regla 1 (NUEVA): si hay TIEMPO MUERTO abierto (AT/PB/Limp/PC/CT),
+    // solo se puede tocar ese mismo código para cerrarlo. Todo lo demás bloqueado.
+    const deadTime = getActiveDeadTime(legajoStr);
+    if (deadTime && code !== deadTime) {
+      alert(`Tenés un tiempo muerto abierto: ${deadTime} — ${desc[deadTime]}\nTocá ${deadTime} de nuevo para terminarlo antes de hacer otra cosa.`);
+      updateCoreButtonsState();
+      return;
+    }
+
+    // Regla 2 (VIEJA): si hay CUALQUIER toggle abierto (CR, MG, RT, etc.),
+    // EP/TP/AP/TAP siguen bloqueados como hasta ahora.
+    if (CORE_CODES.includes(code)) {
+      const anyToggle = getAnyToggleActive(legajoStr);
+      if (anyToggle) {
+        alert(`Tenés una acción pendiente: ${anyToggle} — ${desc[anyToggle]}\nTerminála antes de usar EP/TP/AP/TAP.`);
+        updateCoreButtonsState();
+        return;
+      }
+    }
+  }
+
+  selected = code;
+  selectedArea.classList.remove("hidden");
+
+  selectedBox.innerText = code;
+  selectedDesc.innerText = desc[code];
+
+  // reset input
+  inputArea.classList.add("hidden");
+  textInput.value = "";
+  textInput.placeholder = "";
+
+  // ======= REGLA: toggles muestran input SOLO al TERMINAR (y algunos nunca)
+  if (TOGGLE_CODES.includes(code)) {
+  const ending = isToggleEnding(legajoStr, code);
+
+  // Estos NUNCA piden input
+  const NEVER_INPUT = ["AT","PB","Limp","PC","Perm","MG","CR","CT"];  // 👈 CR agregado y CT
+
+  if (ending && !NEVER_INPUT.includes(code)) {
+    inputArea.classList.remove("hidden");
+
+    if (code === "CC") {
+      inputLabel.innerText = "Ingresar Nro Picking";
+      textInput.placeholder = "Ejemplo: A12";
+    } else {
+      inputLabel.innerText = "Indicar Cantidad";
+      textInput.placeholder = "Ejemplo: 100";
+    }
+  }
+}
+
+  // ======= Picking / Armado siguen igual (siempre piden nro)
+  else if (["EP","TP","AP","TAP"].includes(code)) {
+    inputArea.classList.remove("hidden");
+    inputLabel.innerText = "Ingresar Nro Picking";
+    textInput.placeholder = "Ejemplo: A12B";
+  }
+
+  // Avisos:
+  // - AT/PB/Limp/PC/CT ya bloquean toda la pantalla cuando están abiertos,
+  //   así que no hace falta el "acordate de poner lo mismo al terminar":
+  //   el operario solo puede tocar ese botón para cerrarlo.
+  // - Perm sí lo mantenemos: avisa al operario que si vuelve el mismo
+  //   día tiene que cerrar el permiso.
+  if (["Perm"].includes(code)) {
+    aviso.classList.remove("hidden");
+    aviso.innerText = "Acordate de poner lo mismo si regresas en el mismo dia";
+  } else {
+    aviso.classList.add("hidden");
+  }
+
+  updateCoreButtonsState();
+}
+
+function resetSelection() {
+  selected = null;
+  selectedArea.classList.add("hidden");
+}
+
+/* =========================================================
+   COLA DE ENVÍOS (offline-first)
+   Resuelve: reportes que se perdían cuando la red estaba caída,
+   porque el fetch anterior tenía .catch(()=>{}) y se mostraba
+   "Reporte enviado correctamente" aunque no hubiera llegado.
+   ========================================================= */
+const QUEUE_KEY = "legajo_queue_virgilio_v1";
+
+function readQueue() {
+  try { return JSON.parse(localStorage.getItem(QUEUE_KEY)) || []; }
+  catch { return []; }
+}
+function writeQueue(arr) {
+  try { localStorage.setItem(QUEUE_KEY, JSON.stringify(arr)); } catch {}
+}
+
+/* =========================================================
+   IndexedDB — espejo de la cola, accesible al Service Worker.
+   localStorage es solo accesible desde la página (no desde el SW),
+   así que duplicamos cada item en IDB para que el SW pueda enviarlo
+   en background aunque la app esté cerrada.
+   ========================================================= */
+const IDB_NAME    = "registro-prod-virgilio";
+const IDB_VERSION = 1;
+const IDB_STORE   = "queue";
+let _idbDbPromise = null;
+function idbOpen() {
+  if (_idbDbPromise) return _idbDbPromise;
+  if (!("indexedDB" in window)) {
+    _idbDbPromise = Promise.reject(new Error("IDB no disponible"));
+    return _idbDbPromise;
+  }
+  _idbDbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE, { keyPath: "id" });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+  return _idbDbPromise;
+}
+function idbPut(item) {
+  return idbOpen().then(db => new Promise((res, rej) => {
+    const tx = db.transaction(IDB_STORE, "readwrite");
+    const r = tx.objectStore(IDB_STORE).put(item);
+    r.onsuccess = () => res();
+    r.onerror   = () => rej(r.error);
+  }));
+}
+function idbDelete(id) {
+  return idbOpen().then(db => new Promise((res, rej) => {
+    const tx = db.transaction(IDB_STORE, "readwrite");
+    const r = tx.objectStore(IDB_STORE).delete(id);
+    r.onsuccess = () => res();
+    r.onerror   = () => rej(r.error);
+  }));
+}
+function idbGetAll() {
+  return idbOpen().then(db => new Promise((res, rej) => {
+    const tx = db.transaction(IDB_STORE, "readonly");
+    const r = tx.objectStore(IDB_STORE).getAll();
+    r.onsuccess = () => res(r.result || []);
+    r.onerror   = () => rej(r.error);
+  }));
+}
+
+/* Pide al SW que reintente la cola apenas pueda (Background Sync API).
+   En navegadores sin soporte (Safari iOS), falla silencioso y dependemos
+   del setInterval/online de la página. */
+async function registerBackgroundSync() {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (reg && "sync" in reg) {
+      await reg.sync.register("flush-queue");
+    }
+  } catch { /* no soportado, sin drama */ }
+}
+
+function enqueueReport(payload) {
+  // fecha = día (hora Arg) del ts del payload. Para un reporte normal
+  // payload.ts es Date.now() así que cae en hoy. Para un auto-cierre del
+  // día anterior, payload.ts es las 17:00 de ayer y la fecha va a ser ayer
+  // — así el setHistoryItemStatus actualiza el ítem en el archivo correcto.
+  const fechaHist = payload.ts ? isoToDayKey(payload.ts) : getTodayKey();
+  const item = {
+    id: payload.id,
+    payload,
+    attempts: 0,
+    addedAt: Date.now(),
+    legajo: String(payload.legajo || ""),
+    fecha:  fechaHist
+  };
+  // Doble escritura: LS (rápido, para la página) e IDB (visible al SW).
+  const arr = readQueue();
+  arr.push(item);
+  writeQueue(arr);
+  idbPut(item).catch(() => {});
+  updatePendingIndicator();
+  registerBackgroundSync();   // pide al browser que despache aunque cerremos la app
+}
+
+/* Genera un cierre automático para un toggle que quedó abierto al cambiar
+   de día. ts_cliente = fin de jornada (17:00 Arg) del día en que se abrió. */
+function enqueueAutoClose(legajo, code, tsInicioIso) {
+  const endTs   = endOfWorkdayArgFor(tsInicioIso);
+  const startTs = new Date(tsInicioIso).getTime();
+  // Defensa: si los timestamps son inválidos (localStorage corrupto), abortar.
+  if (isNaN(endTs.getTime()) || isNaN(startTs)) return;
+  // Si el fin de jornada calculado es <= el ts_inicio (caso raro: el operario
+  // abrió un Perm después de las 17:00 y no volvió), no auto-cerramos —
+  // queda como apertura suelta y Logística la trata como excepción.
+  if (endTs.getTime() <= startTs) return;
+
+  const nowMs = endTs.getTime();
+  const id    = nowMs.toString(36) + "_auto_" + Math.random().toString(36).slice(2, 8);
+  const descr = desc[code] || "";
+  const payload = {
+    legajo:        legajo,
+    opcion:        code,
+    descripcion:   descr,
+    texto:         "",
+    ts:            nowMs,
+    id:            id,
+    ts_inicio_iso: tsInicioIso
+  };
+  // El cierre auto va al historial del día en que se abrió, no al de hoy.
+  pushHistoryForLegajoOnDay(legajo, isoToDayKey(nowMs), {
+    ts: nowMs, opcion: code, descripcion: descr,
+    texto: "", id: id, status: "queued"
+  });
+  enqueueReport(payload);
+}
+function removeFromQueue(id) {
+  writeQueue(readQueue().filter(it => it.id !== id));
+  idbDelete(id).catch(() => {});
+  updatePendingIndicator();
+}
+
+/* Intenta enviar UN payload a Supabase.
+   Devuelve { ok, networkFail, status }:
+     - ok=true            -> aceptado (201 ó 409 dedup)
+     - ok=false, networkFail=true  -> sin respuesta (timeout, sin red, CORS)
+     - ok=false, networkFail=false -> el server respondió con error (4xx/5xx) */
+async function trySendOneReport(payload) {
+  try {
+    // Corte duro a los 12s para no quedarnos esperando si la red se cuelga.
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 12000);
+    const res = await fetch(SUPABASE_TABLE_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "apikey":        SUPABASE_KEY,
+        "Authorization": "Bearer " + SUPABASE_KEY,
+        "Content-Type":  "application/json",
+        "Prefer":        "return=minimal"  // anon NO tiene SELECT en RLS; pedir
+                                            // return=representation hace que el
+                                            // server devuelva 4xx aunque el INSERT
+                                            // en sí esté bien. Mantener minimal.
+      },
+      body: JSON.stringify({
+        client_id:   payload.id,                              // UNIQUE en la tabla -> dedup
+        legajo:      payload.legajo,
+        opcion:      payload.opcion,
+        descripcion: payload.descripcion,
+        texto:       payload.texto,
+        ts_cliente:  new Date(payload.ts).toISOString(),
+        ts_inicio:   payload.ts_inicio_iso || null            // solo poblado en cierres
+      }),
+      keepalive: true,        // sobrevive a cambios de pantalla / cierres rápidos
+      signal: ctrl.signal
+    });
+    clearTimeout(t);
+    if (!res) return { ok: false, networkFail: true };
+    // 201 Created = ok. 409 Conflict = ya existía (reintento exitoso).
+    if (res.ok || res.status === 409) return { ok: true, status: res.status };
+    // Server respondió pero rechazó. No reintentar al toque.
+    return { ok: false, networkFail: false, status: res.status };
+  } catch (e) {
+    // fetch tiró: timeout, offline, CORS, etc.
+    return { ok: false, networkFail: true };
+  }
+}
+
+/* =========================================================
+   AUDITORÍA REMOTA: registra eventos de envío fallido en la tabla
+   Auditoria_Produccion_Virgilio. Best-effort, fire-and-forget.
+   Si la tabla no existe o no hay red, el log se descarta silencioso.
+   ========================================================= */
+const AUDIT_ENDPOINT =
+  SUPABASE_URL + "/rest/v1/Auditoria_Produccion_Virgilio";
+
+function logErrorToAudit(payload, attempts, r) {
+  try {
+    const body = {
+      client_id:   payload.id || null,
+      legajo:      payload.legajo || null,
+      opcion:      payload.opcion || null,
+      descripcion: payload.descripcion || null,
+      texto:       payload.texto || null,
+      ts_cliente:  payload.ts ? new Date(payload.ts).toISOString() : null,
+      ts_inicio:   payload.ts_inicio_iso || null,
+      intentos:    attempts || 1,
+      motivo:      r.networkFail ? "network" : `server_${r.status || "?"}`,
+      user_agent:  (typeof navigator !== "undefined" && navigator.userAgent) || null
+    };
+    fetch(AUDIT_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "apikey":        SUPABASE_KEY,
+        "Authorization": "Bearer " + SUPABASE_KEY,
+        "Content-Type":  "application/json",
+        "Prefer":        "return=minimal"
+      },
+      body: JSON.stringify(body),
+      keepalive: true
+    }).catch(() => {});
+  } catch { /* fire and forget */ }
+}
+
+/* Vacía la cola intentando enviar lo pendiente.
+   - Procesa hasta BATCH_SIZE items por pasada.
+   - Si la red cae (networkFail), corta para no martillar.
+   - Si un item lo rechaza el server (data inválida), sigue con los demás
+     en lugar de bloquear toda la cola. */
+const BATCH_SIZE = 20;
+let flushing = false;
+async function flushQueue() {
+  if (flushing) return;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    updatePendingIndicator();
+    return;
+  }
+  flushing = true;
+  try {
+    const arr = readQueue();
+    if (!arr.length) return;
+
+    const batch = arr.slice(0, BATCH_SIZE);
+    let historyChanged = false;
+    for (const item of batch) {
+      const r = await trySendOneReport(item.payload);
+      if (r.ok) {
+        removeFromQueue(item.id);
+        if (setHistoryItemStatus(item.legajo, item.fecha, item.id, "sent", new Date().toISOString(), r.created_at)) {
+          historyChanged = true;
+        }
+      } else {
+        // Anotar intento en la cola
+        const cur = readQueue();
+        const i = cur.findIndex(x => x.id === item.id);
+        let newAttempts = (item.attempts || 0) + 1;
+        if (i >= 0) {
+          cur[i].attempts = newAttempts;
+          cur[i].lastTry  = Date.now();
+          cur[i].lastErr  = r.networkFail ? "network" : `server_${r.status||"?"}`;
+          writeQueue(cur);
+          newAttempts = cur[i].attempts;
+        }
+        // Auditoría remota: 1er intento y cada 5 (para no spamear)
+        if (newAttempts === 1 || newAttempts % 5 === 0) {
+          logErrorToAudit(item.payload, newAttempts, r);
+        }
+        // Solo marcar "failed" en el historial si fue rechazo del server.
+        // Si fue networkFail, dejarlo como "queued" — va a reintentar solo.
+        if (!r.networkFail) {
+          if (setHistoryItemStatus(item.legajo, item.fecha, item.id, "failed")) {
+            historyChanged = true;
+          }
+        }
+        // Red caída: no insistir con el resto del batch.
+        if (r.networkFail) break;
+        // Server rejection: seguir con el próximo item de la cola.
+      }
+    }
+    // Si la pantalla de legajo está visible y cambió algún status, refresco.
+    if (historyChanged && legajoInput && !legajoScreen.classList.contains("hidden")) {
+      renderLegajoHistory(legajoInput.value);
+    }
+  } finally {
+    flushing = false;
+    updatePendingIndicator();
+  }
+}
+
+const APP_VERSION = "v1.8";
+
+function updatePendingIndicator() {
+  const el = document.getElementById("pendingIndicator");
+  const q = readQueue();
+  const count = q.length;
+  if (el) {
+    if (count > 0) {
+      el.style.display = "block";
+      el.textContent = `⚠️ ${count} reporte(s) sin enviar — se reenviarán al volver la red`;
+    } else {
+      el.style.display = "none";
+      el.textContent = "";
+    }
+  }
+  // Badge de versión + estado (siempre visible en esquina inferior derecha)
+  const vb = document.getElementById("versionBadge");
+  if (vb) {
+    if (count === 0) {
+      vb.textContent = `${APP_VERSION} ✓`;
+      vb.className = "";
+    } else if (q.some(x => x.lastErr && !x.lastErr.startsWith("network"))) {
+      vb.textContent = `${APP_VERSION} ⚠ ${count}`;
+      vb.className = "error";
+    } else {
+      vb.textContent = `${APP_VERSION} ⏳ ${count}`;
+      vb.className = "pending";
+    }
+  }
+}
+
+/* =========================================================
+   ENVÍO
+   ========================================================= */
+async function send() {
+  const legajoStr   = String(legajoInput.value || "");
+  const opcion      = selected;
+  const descripcion = desc[selected] || "";
+  const texto       = (textInput.value || "").toUpperCase();
+
+  if (!legajoStr) { alert("Falta el número de legajo"); return; }
+  if (!opcion)    { alert("Falta seleccionar una opción"); return; }
+
+  // ID único por reporte: permite dedup en el server (UNIQUE en client_id).
+  const nowMs  = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const payload = {
+    legajo: legajoInput.value,
+    opcion,
+    descripcion,
+    texto,
+    ts: nowMs,
+    id: nowMs.toString(36) + "_" + Math.random().toString(36).slice(2, 8),
+    ts_inicio_iso: null   // se completa abajo si esta acción es un CIERRE
+  };
+
+  /* ---- ts_inicio para cierres (capturar ANTES de modificar el estado) ---- */
+  if (opcion === "TP") {
+    const st = getLegajoState(legajoStr);
+    payload.ts_inicio_iso = (st.picking && st.picking.ts_inicio) || null;
+  } else if (opcion === "TAP") {
+    const st = getLegajoState(legajoStr);
+    payload.ts_inicio_iso = (st.armado && st.armado.ts_inicio) || null;
+  } else if (TOGGLE_CODES.includes(opcion)) {
+    const st = getLegajoState(legajoStr);
+    const cur = st.toggles && st.toggles[opcion];
+    // string = ISO de apertura (estamos cerrando); true = legacy sin ts; undefined = abriendo
+    if (typeof cur === "string") payload.ts_inicio_iso = cur;
+  }
+
+  /* ---- historial local ---- */
+  pushHistoryForLegajo(legajoStr, {
+    ts: payload.ts, opcion, descripcion, texto,
+    id: payload.id,           // permite actualizar el status cuando se confirme el envío
+    status: "queued"
+  });
+
+  /* ---- estado / pendientes locales ---- */
+  if (opcion === "EP") {
+    const st = getLegajoState(legajoStr);
+    st.picking = { active:true, value:texto, ts_inicio: nowIso };
+    setLegajoState(legajoStr, st);
+  } else if (opcion === "TP") {
+    const st = getLegajoState(legajoStr);
+    st.picking = { active:false, value:"", ts_inicio: null };
+    setLegajoState(legajoStr, st);
+  } else if (opcion === "AP") {
+    const st = getLegajoState(legajoStr);
+    st.armado = { active:true, value:texto, ts_inicio: nowIso };
+    setLegajoState(legajoStr, st);
+  } else if (opcion === "TAP") {
+    const st = getLegajoState(legajoStr);
+    st.armado = { active:false, value:"", ts_inicio: null };
+    setLegajoState(legajoStr, st);
+  } else if (TOGGLE_CODES.includes(opcion)) {
+    // 1ra vez abre (guarda ts ISO); 2da vez cierra (borra)
+    toggleStartOrEnd(legajoStr, opcion);
+  }
+
+  /* ---- ENCOLAR SIEMPRE antes de tocar la red ---- */
+  enqueueReport(payload);
+
+  const sendBtn = document.getElementById("sendBtn");
+  if (sendBtn) { sendBtn.disabled = true; sendBtn.innerText = "Enviando..."; }
+
+  const r = await trySendOneReport(payload);
+
+  if (sendBtn) { sendBtn.disabled = false; sendBtn.innerText = "Enviar"; }
+
+  if (r.ok) {
+    removeFromQueue(payload.id);
+    setHistoryItemStatus(legajoStr, getTodayKey(), payload.id, "sent", new Date().toISOString(), r.created_at);
+    alert("Reporte enviado correctamente");
+  } else {
+    // Si fue rechazo del server (datos inválidos, etc.) marco "failed" en el historial.
+    // Si fue caída de red, dejo "queued" — se reintenta solo.
+    if (!r.networkFail) {
+      setHistoryItemStatus(legajoStr, getTodayKey(), payload.id, "failed");
+    }
+    alert("⚠️ Sin conexión o sin respuesta del servidor.\nTu reporte quedó guardado y se reenviará automáticamente cuando vuelva la red.");
+  }
+
+  resetSelection();
+  optionsScreen.classList.add("hidden");
+  legajoScreen.classList.remove("hidden");
+  document.getElementById("btnHistDias")?.classList.remove("hidden");
+
+  // No se borra el legajo: el operario suele encadenar varios reportes seguidos.
+  // Para cambiar de operario alcanza con tocar el input y reescribir.
+  renderLegajoHistory(legajoInput.value);
+  updateCoreButtonsState();
+  renderPendingSuggestion();
+  updatePendingIndicator();
+
+  // Por si quedaron otros pendientes acumulados de intentos previos.
+  flushQueue();
+}
+
+/* =========================================================
+   SERVICE WORKER — registra sw.js y reconcilia LS ↔ IDB
+   ========================================================= */
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.register("sw.js", { updateViaCache: "none" });
+    // Re-chequear updates cada 60 s por si hubo deploy nuevo.
+    setInterval(() => { reg.update().catch(() => {}); }, 60000);
+  } catch (e) {
+    console.warn("SW no se pudo registrar:", e);
+  }
+}
+
+/* Asegura que todo lo de LS también esté en IDB (caso típico: instalación
+   previa al SW, items viejos en LS sin reflejar en IDB todavía). */
+async function migrateQueueToIDB() {
+  const ls = readQueue();
+  for (const it of ls) {
+    try { await idbPut(it); } catch {}
+  }
+}
+
+/* El SW nos avisa cuando manda un item con éxito (ver postMessage en sw.js).
+   Lo borramos de LS y actualizamos el historial en tiempo real, sin depender
+   de inferencias frágiles del tipo "está en LS pero no en IDB". */
+function handleServiceWorkerMessage(event) {
+  const d = event.data;
+  if (!d || d.type !== "ITEM_SENT") return;
+  // Limpiar de la cola local
+  const filtered = readQueue().filter(it => it.id !== d.id);
+  writeQueue(filtered);
+  // Marcar como ✓ enviado en el historial
+  if (d.legajo && d.fecha && d.id) {
+    setHistoryItemStatus(d.legajo, d.fecha, d.id, "sent", new Date().toISOString(), d.createdAt);
+  }
+  updatePendingIndicator();
+  // Re-render si el operario está mirando la pantalla de legajo
+  if (legajoInput && !legajoScreen.classList.contains("hidden")) {
+    renderLegajoHistory(legajoInput.value);
+  }
+}
+
+/* =========================================================
+   init + reintentos automáticos de la cola
+   ========================================================= */
+
+/* Borrar storage del historial v1 (formato viejo, ya no se usa). One-shot. */
+try { localStorage.removeItem("legajo_history_virgilio_v1"); } catch {}
+
+/* Si cambió el día (hora Argentina): retener últimos N días productivos
+   y limpiar los toggles que NO sobreviven al día siguiente. */
+cleanupIfDayChanged();
+
+/* Bind del botón flotante 📅 */
+document.getElementById("btnHistDias")?.addEventListener("click", openHistoryModal);
+
+/* SW + IDB: registrar el SW, replicar la cola completa de LS a IDB para
+   que el SW la vea, y volver a pedir un background sync si la cola tiene
+   items pendientes de versiones anteriores. */
+registerServiceWorker();
+migrateQueueToIDB()
+  .then(() => {
+    if (readQueue().length > 0) registerBackgroundSync();
+  })
+  .catch(() => {});
+
+/* Escuchar mensajes del SW (ITEM_SENT cuando despachó un reporte). */
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.addEventListener("message", handleServiceWorkerMessage);
+}
+
+/* Precargar el último legajo guardado (para que el operario no tenga
+   que reescribirlo cada vez que abre la app). Si nunca usó la app en
+   este celular, el input queda vacío. */
+const _prevLegajo = readLastLegajo();
+if (_prevLegajo) {
+  legajoInput.value = _prevLegajo;
+  renderLegajoHistory(_prevLegajo);
+  updateCoreButtonsState();
+  renderPendingSuggestion();
+} else {
+  renderLegajoHistory("");
+}
+
+updatePendingIndicator();
+
+/* Cuando vuelve la red, drená la cola de manera agresiva durante 3s
+   (en lugar de un solo intento aislado). */
+window.addEventListener("online", async () => {
+  const end = Date.now() + 3000;
+  while (Date.now() < end && readQueue().length) await flushQueue();
+});
+
+/* Foco / visibilidad: reintento. Si el SW envió cosas mientras estábamos
+   escondidos, el handler de mensajes ITEM_SENT ya actualizó la UI; lo que
+   no haya alcanzado a propagarse se resuelve en el próximo flushQueue
+   (server retorna 409 por client_id duplicado y se trata como éxito). */
+window.addEventListener("focus", flushQueue);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") flushQueue();
+  // También aprovecho a chequear cambio de día por si la app quedó abierta cruzando medianoche.
+  cleanupIfDayChanged();
+});
+
+/* Reintento periódico cada 3 s (antes 30 s). */
+setInterval(flushQueue, 3000);
+
+/* Nota: no usamos navigator.sendBeacon porque no permite headers custom y
+   Supabase requiere "apikey" + "Authorization". El "keepalive: true" del
+   fetch en trySendOneReport ya cubre el cierre rápido de pestaña; lo que
+   no alcance a salir queda en cola y se reintenta al reabrir la app. */
+
+/* Intento inicial al abrir la app. */
+flushQueue();
+</script>
+
+</body>
+</html>
