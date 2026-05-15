@@ -298,7 +298,7 @@ button {
 <button id="btnHistDias" title="Historial de días anteriores">📅</button>
 
 <!-- Badge de versión + estado de cola (abajo a la derecha) -->
-<div id="versionBadge">v1.14 ✓</div>
+<div id="versionBadge">v1.15 ✓</div>
 
 <!-- Modal: historial de días anteriores (oculto por defecto) -->
 <div id="histModal" onclick="if(event.target.id==='histModal') closeHistoryModal()">
@@ -424,9 +424,17 @@ const SURVIVING_TOGGLES = ["CR","MG"]; // únicos toggles que sobreviven al camb
 
 /* Auto-cierre al fin de jornada para toggles abiertos que quedaron sin cerrar.
    Si la limpieza del día siguiente encuentra alguno de estos abierto, genera
-   un registro de cierre con ts_cliente = fin de jornada del día en que se abrió. */
+   un registro de cierre con ts_cliente = fin de jornada del día en que se abrió.
+   Incluye CC/RT/RI/EI: si el operario olvidó cerrarlos y pasó el día, generamos
+   igual el cierre (con texto vacío). Lo normal es que los cierre Terminar Día
+   con cantidad; este auto-cierre es solo red de seguridad para el caso raro. */
 const WORKDAY_END_HOUR_AR = 17;    // 17:00 hora Argentina (la jornada termina ahí)
-const AUTO_CLOSE_CODES    = ["AT","PB","Limp","PC","CT","Perm"];
+const AUTO_CLOSE_CODES    = ["AT","PB","Limp","PC","CT","Perm","CC","RT","RI","EI"];
+
+/* Toggles que al cerrarse manualmente piden una cantidad/dato en el texto.
+   En Terminar Día, los abiertos de este grupo abren un input en el modal y
+   no se puede confirmar sin completar todos los campos. */
+const CLOSE_NEEDS_INPUT_CODES = ["CC","RT","RI","EI"];
 
 /* =========================================================
    FECHA / TIMESTAMP
@@ -716,12 +724,15 @@ function getTodaySummaryForLegajo(legajo) {
   return { total: hist.length, counts };
 }
 
-/* Devuelve qué pendientes tiene el legajo, separados en
-   "sobreviven al día siguiente" vs "se cierran ahora". */
+/* Devuelve qué pendientes tiene el legajo, separados en 3 grupos:
+   - sobreviven        : continúan al día siguiente (picking/armado/CR/MG)
+   - seCierranAuto     : se cierran ahora con texto="" (AT/PB/Limp/PC/CT/Perm)
+   - seCierranConInput : se cierran ahora pero piden cantidad (CC/RT/RI/EI) */
 function getPendingsForLegajo(legajo) {
   const st = getLegajoState(legajo);
-  const sobreviven = [];
-  const seCierran  = [];
+  const sobreviven        = [];
+  const seCierranAuto     = [];
+  const seCierranConInput = [];
   if (st.picking && st.picking.active) {
     sobreviven.push({ tipo: "Picking", desc: "Picking en curso", valor: st.picking.value || "" });
   }
@@ -731,11 +742,14 @@ function getPendingsForLegajo(legajo) {
   if (st.toggles) {
     for (const code of Object.keys(st.toggles)) {
       const item = { tipo: code, desc: desc[code] || "", valor: "" };
-      if (SURVIVING_TOGGLES.includes(code)) sobreviven.push(item);
-      else                                  seCierran.push(item);
+      if (SURVIVING_TOGGLES.includes(code))             sobreviven.push(item);
+      else if (CLOSE_NEEDS_INPUT_CODES.includes(code))  seCierranConInput.push(item);
+      else                                              seCierranAuto.push(item);
     }
   }
-  return { sobreviven, seCierran };
+  // Mantengo seCierran como unión para compatibilidad con código viejo.
+  return { sobreviven, seCierranAuto, seCierranConInput,
+           seCierran: [...seCierranAuto, ...seCierranConInput] };
 }
 
 function terminarDia() {
@@ -760,12 +774,28 @@ function terminarDia() {
        </ul>`
     : "<div style='color:#666; font-size:14px;'>Ninguno.</div>";
 
-  const seCierranHtml = pendings.seCierran.length
+  // Toggles auto-cerrables sin input (AT/PB/Limp/PC/CT/Perm)
+  const seCierranAutoHtml = pendings.seCierranAuto.length
     ? `<ul style="margin:6px 0 0 0; padding-left:20px;">
-         ${pendings.seCierran.map(p =>
+         ${pendings.seCierranAuto.map(p =>
            `<li><b>${escapeHtml(p.tipo)}</b> — ${escapeHtml(p.desc)}</li>`).join("")}
        </ul>`
-    : "<div style='color:#666; font-size:14px;'>Ninguno.</div>";
+    : "";
+
+  // Toggles que piden cantidad (CC/RT/RI/EI): input por cada uno
+  const seCierranConInputHtml = pendings.seCierranConInput.length
+    ? pendings.seCierranConInput.map(p => `
+        <div style="margin: 8px 0;">
+          <label style="display:block; font-size:14px; margin-bottom:3px;">
+            <b>${escapeHtml(p.tipo)}</b> — ${escapeHtml(p.desc)}: <span style="color:#991b1b;">cantidad</span>
+          </label>
+          <input type="text" id="td_input_${escapeHtml(p.tipo)}"
+                 inputmode="numeric"
+                 style="width:100%; padding:8px; border:2px solid #ca8a04;
+                        border-radius:6px; font-size:16px; box-sizing:border-box;"
+                 placeholder="Cantidad...">
+        </div>`).join("")
+    : "";
 
   // Detectar si ya hubo un FJ hoy: bandera para mostrar advertencia.
   const prevFJ = readDayHist(getTodayKey(), legajoStr).find(it => it.opcion === "FJ");
@@ -793,10 +823,28 @@ function terminarDia() {
       ${sobrevivenHtml}
     </div>
 
-    <div style="padding:10px; background:#fef2f2; border-radius:8px;">
-      <b style="color:#991b1b;">⛔ Se cierran ahora:</b>
-      ${seCierranHtml}
-    </div>
+    ${pendings.seCierranAuto.length ? `
+      <div style="padding:10px; background:#fef2f2; border-radius:8px; margin-bottom:14px;">
+        <b style="color:#991b1b;">⛔ Se cierran ahora:</b>
+        ${seCierranAutoHtml}
+      </div>
+    ` : ""}
+
+    ${pendings.seCierranConInput.length ? `
+      <div style="padding:10px; background:#fffbeb; border:2px solid #ca8a04; border-radius:8px;">
+        <b style="color:#854d0e;">📝 Necesitan cantidad antes de cerrar:</b>
+        <div style="font-size:12px; color:#854d0e; margin: 4px 0 8px 0;">
+          Completá el dato para cada uno. Sin esto no se puede terminar el día.
+        </div>
+        ${seCierranConInputHtml}
+      </div>
+    ` : ""}
+
+    ${(!pendings.seCierranAuto.length && !pendings.seCierranConInput.length) ? `
+      <div style="padding:10px; background:#f0fdf4; border-radius:8px;">
+        <span style="color:#166534;">Sin toggles abiertos para cerrar.</span>
+      </div>
+    ` : ""}
   `;
 
   document.getElementById("terminarDiaContent").innerHTML = html;
@@ -852,6 +900,22 @@ async function confirmarTerminarDia() {
   const summary = getTodaySummaryForLegajo(legajoStr);
   const st = getLegajoState(legajoStr);
 
+  // Validación de cantidades para los toggles CC/RT/RI/EI: si alguno
+  // está abierto, el operario tiene que completar el input del modal
+  // antes de confirmar. Sin completar => alerta y no cierra nada.
+  const closeInputs = {};   // code -> cantidad escrita
+  const pendNow = getPendingsForLegajo(legajoStr);
+  for (const p of pendNow.seCierranConInput) {
+    const el = document.getElementById("td_input_" + p.tipo);
+    const v  = (el && el.value || "").trim();
+    if (!v) {
+      alert(`Falta completar la cantidad para ${p.tipo} (${p.desc}). Tenés que ponerla antes de terminar el día.`);
+      if (el) { el.focus(); el.style.borderColor = "#dc2626"; }
+      return;
+    }
+    closeInputs[p.tipo] = v;
+  }
+
   const nowMs  = Date.now();
   const nowIso = new Date(nowMs).toISOString();
 
@@ -879,19 +943,25 @@ async function confirmarTerminarDia() {
       if (SURVIVING_TOGGLES.includes(code)) continue;
       const cur = st.toggles[code];
       const tsInicioIso = (typeof cur === "string") ? cur : null;
+      // Para CC/RT/RI/EI el texto del cierre viene del input del modal
+      // (ya validado más arriba). Para AT/PB/Limp/PC/CT/Perm el texto
+      // queda vacío como antes.
+      const textoCierre = CLOSE_NEEDS_INPUT_CODES.includes(code)
+        ? (closeInputs[code] || "")
+        : "";
       const closeId = nowMs.toString(36) + "_fjclose_" + code + "_" + Math.random().toString(36).slice(2, 6);
       const closePayload = {
         legajo: legajoStr,
         opcion: code,
         descripcion: desc[code] || "",
-        texto: "",
+        texto: textoCierre,
         ts: nowMs,
         id: closeId,
         ts_inicio_iso: tsInicioIso
       };
       pushHistoryForLegajo(legajoStr, {
         ts: nowMs, opcion: code, descripcion: closePayload.descripcion,
-        texto: "", id: closeId, status: "queued",
+        texto: textoCierre, id: closeId, status: "queued",
         ts_inicio_iso: tsInicioIso
       });
       enqueueReport(closePayload);
@@ -1551,7 +1621,7 @@ async function flushQueue() {
   }
 }
 
-const APP_VERSION = "v1.14";
+const APP_VERSION = "v1.15";
 
 function updatePendingIndicator() {
   const el = document.getElementById("pendingIndicator");
