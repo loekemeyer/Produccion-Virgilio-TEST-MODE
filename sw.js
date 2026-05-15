@@ -6,7 +6,7 @@
    ⚠ IMPORTANTE: SUPABASE_URL y SUPABASE_KEY están duplicados acá y en
    index.html. Si rotás la publishable key, hay que actualizar AMBOS.
    ========================================================= */
-const SW_VERSION = "v1.10-vir";
+const SW_VERSION = "v1.11-vir";
 
 const SUPABASE_URL = "https://hrxfctzncixxqmpfhskv.supabase.co";
 const SUPABASE_KEY = "sb_publishable_BqpAgZH6ty-9wft10_YMhw_0rcIPuWT";
