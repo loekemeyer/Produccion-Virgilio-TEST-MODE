@@ -294,7 +294,7 @@ button {
 <button id="btnHistDias" title="Historial de días anteriores">📅</button>
 
 <!-- Badge de versión + estado de cola (abajo a la derecha) -->
-<div id="versionBadge">v1.9 ✓</div>
+<div id="versionBadge">v1.10 ✓</div>
 
 <!-- Modal: historial de días anteriores (oculto por defecto) -->
 <div id="histModal" onclick="if(event.target.id==='histModal') closeHistoryModal()">
@@ -783,6 +783,31 @@ async function confirmarTerminarDia() {
   const nowMs  = Date.now();
   const nowIso = new Date(nowMs).toISOString();
 
+  // 0) RE-ENVIAR todos los reportes del día como red de seguridad.
+  //    Cada item del historial de hoy se vuelve a encolar con su MISMO
+  //    client_id (= item.id). En el server:
+  //    - Si ya estaba (envío original llegó OK): UNIQUE constraint dispara
+  //      409, que el cliente trata como éxito. Sin duplicados.
+  //    - Si se había perdido (sent local pero nunca llegó): se inserta
+  //      ahora, recuperado.
+  //    - Si llega después un mensaje original que estaba en cola con el
+  //      mismo client_id: también se descarta por dedup.
+  //    Esto se ejecuta ANTES de generar los cierres y la FJ para no
+  //    duplicar esos items recién creados.
+  const todayHist = readDayHist(getTodayKey(), legajoStr);
+  for (const histItem of todayHist) {
+    if (!histItem.id) continue;          // items legacy sin id no se pueden re-enviar
+    enqueueReport({
+      legajo:        legajoStr,
+      opcion:        histItem.opcion,
+      descripcion:   histItem.descripcion || (desc[histItem.opcion] || ""),
+      texto:         histItem.texto || "",
+      ts:            histItem.ts || nowMs,
+      id:            histItem.id,        // mismo client_id => dedup en el server
+      ts_inicio_iso: histItem.ts_inicio_iso || null
+    });
+  }
+
   // 1) Auto-cerrar TODOS los toggles no-sobrevivientes con ts_cliente = ahora.
   //    NO usamos enqueueAutoClose (que pone ts_cliente=17:00) porque acá el
   //    operario está cerrando manualmente, en este momento.
@@ -803,7 +828,8 @@ async function confirmarTerminarDia() {
       };
       pushHistoryForLegajo(legajoStr, {
         ts: nowMs, opcion: code, descripcion: closePayload.descripcion,
-        texto: "", id: closeId, status: "queued"
+        texto: "", id: closeId, status: "queued",
+        ts_inicio_iso: tsInicioIso
       });
       enqueueReport(closePayload);
       delete st.toggles[code];
@@ -1288,7 +1314,8 @@ function enqueueAutoClose(legajo, code, tsInicioIso) {
   // El cierre auto va al historial del día en que se abrió, no al de hoy.
   pushHistoryForLegajoOnDay(legajo, isoToDayKey(nowMs), {
     ts: nowMs, opcion: code, descripcion: descr,
-    texto: "", id: id, status: "queued"
+    texto: "", id: id, status: "queued",
+    ts_inicio_iso: tsInicioIso
   });
   enqueueReport(payload);
 }
@@ -1444,7 +1471,7 @@ async function flushQueue() {
   }
 }
 
-const APP_VERSION = "v1.9";
+const APP_VERSION = "v1.10";
 
 function updatePendingIndicator() {
   const el = document.getElementById("pendingIndicator");
@@ -1517,7 +1544,8 @@ async function send() {
   /* ---- historial local ---- */
   pushHistoryForLegajo(legajoStr, {
     ts: payload.ts, opcion, descripcion, texto,
-    id: payload.id,           // permite actualizar el status cuando se confirme el envío
+    id: payload.id,                          // permite actualizar el status cuando se confirme el envío
+    ts_inicio_iso: payload.ts_inicio_iso || null,  // necesario para "replay" desde Terminar Día
     status: "queued"
   });
 
