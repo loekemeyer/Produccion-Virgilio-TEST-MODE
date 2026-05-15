@@ -1,0 +1,20 @@
+{
+  "name": "Producción Virgilio",
+  "short_name": "Virgilio",
+  "description": "Reportes de producción Virgilio",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#1e6bd6",
+  "lang": "es-AR",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
