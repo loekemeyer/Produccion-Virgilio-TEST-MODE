@@ -298,7 +298,7 @@ button {
 <button id="btnHistDias" title="Historial de días anteriores">📅</button>
 
 <!-- Badge de versión + estado de cola (abajo a la derecha) -->
-<div id="versionBadge">v1.12 ✓</div>
+<div id="versionBadge">v1.13 ✓</div>
 
 <!-- Modal: historial de días anteriores (oculto por defecto) -->
 <div id="histModal" onclick="if(event.target.id==='histModal') closeHistoryModal()">
@@ -574,9 +574,7 @@ function renderLegajoHistory(legajo) {
     container.innerText = "Ingresá tu legajo para ver el resumen";
     return;
   }
-  // FJ (Fin de Jornada) es un marcador interno; no se muestra al operario.
-  const hist = readDayHist(getTodayKey(), String(legajo))
-    .filter(h => h.opcion !== "FJ");
+  const hist = readDayHist(getTodayKey(), String(legajo));
   if (!hist.length) {
     container.className = "history-empty";
     container.innerText = "No hay reportes hoy para este legajo en este dispositivo.";
@@ -590,11 +588,15 @@ function renderLegajoHistory(legajo) {
     // (la hora en que el cliente recibió la confirmación 201, que para
     // efectos prácticos es cuando llegó a Supabase).
     const arrived = h.createdAt || h.sentAt;
+    // El "Dato" del FJ es el JSON con conteos; técnico, confunde al
+    // operario. Para FJ ocultamos esa línea pero la entrada se muestra
+    // igual (con su badge de estado, error incluido).
+    const showDato = h.opcion !== "FJ" && h.texto;
     return `
       <div class="history-item">
         <div class="line1">${escapeHtml(h.opcion)} — ${escapeHtml(h.descripcion)}${statusBadge(h.status)}</div>
         <div class="line2">
-          ${h.texto ? `Dato: <b>${escapeHtml(h.texto)}</b><br>` : ""}
+          ${showDato ? `Dato: <b>${escapeHtml(h.texto)}</b><br>` : ""}
           ${h.ts ? `Fecha: ${escapeHtml(formatDateTime(h.ts))}` : ""}
           ${arrived ? `<br>Llegó al server: ${escapeHtml(formatDateTime(arrived))}` : ""}
         </div>
@@ -665,12 +667,7 @@ function cleanupIfDayChanged() {
 function openHistoryModal() {
   const legajoStr = String(legajoInput.value || "").trim();
   if (!legajoStr) { alert("Ingresá tu legajo primero"); return; }
-  const previasRaw = getAllPrevDaysForLegajo(legajoStr);
-  // FJ es un marcador interno: se filtra antes de mostrar. Si un día solo
-  // tenía FJ (raro) queda vacío y se descarta.
-  const previas = previasRaw
-    .map(d => ({ fecha: d.fecha, items: (d.items || []).filter(it => it.opcion !== "FJ") }))
-    .filter(d => d.items.length);
+  const previas = getAllPrevDaysForLegajo(legajoStr);
   const content = document.getElementById("histModalContent");
   if (!previas.length) {
     content.innerHTML = `<div class="history-empty">No hay reportes de días anteriores guardados en este dispositivo para el legajo ${escapeHtml(legajoStr)}.</div>`;
@@ -682,10 +679,12 @@ function openHistoryModal() {
         <div class="hist-day-title">${escapeHtml(formatDayLong(d.fecha))} (${d.items.length})</div>
         ${d.items.map(it => {
           const arrived = it.createdAt || it.sentAt;
+          // FJ: ocultar el "Dato" (JSON técnico), mostrar la entrada igual.
+          const showDato = it.opcion !== "FJ" && it.texto;
           return `
             <div class="hist-day-item">
               <b>${escapeHtml(it.opcion)}</b> — ${escapeHtml(it.descripcion)}${statusBadge(it.status)}
-              ${it.texto ? ` — <i>${escapeHtml(it.texto)}</i>` : ""}
+              ${showDato ? ` — <i>${escapeHtml(it.texto)}</i>` : ""}
               ${it.ts ? `<br><span style="color:#666;font-size:12px;">${escapeHtml(formatDateTime(it.ts))}</span>` : ""}
               ${arrived ? `<br><span style="color:#666;font-size:12px;">Llegó al server: ${escapeHtml(formatDateTime(arrived))}</span>` : ""}
             </div>
@@ -1542,7 +1541,7 @@ async function flushQueue() {
   }
 }
 
-const APP_VERSION = "v1.12";
+const APP_VERSION = "v1.13";
 
 function updatePendingIndicator() {
   const el = document.getElementById("pendingIndicator");
