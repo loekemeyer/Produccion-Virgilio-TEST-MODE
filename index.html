@@ -298,7 +298,7 @@ button {
 <button id="btnHistDias" title="Historial de días anteriores">📅</button>
 
 <!-- Badge de versión + estado de cola (abajo a la derecha) -->
-<div id="versionBadge">v1.13 ✓</div>
+<div id="versionBadge">v1.14 ✓</div>
 
 <!-- Modal: historial de días anteriores (oculto por defecto) -->
 <div id="histModal" onclick="if(event.target.id==='histModal') closeHistoryModal()">
@@ -825,7 +825,10 @@ async function bulkSendDayReplay(legajoStr, historySnapshot) {
     }));
   if (!bulkPayload.length) return;
   try {
-    await fetch(SUPABASE_TABLE_ENDPOINT, {
+    // Igual que en el upsert del FJ: PostgREST necesita ?on_conflict=client_id
+    // para saber qué constraint usar; sin esto el ignore-duplicates no se
+    // aplica y los conflictos tiran 409 abortando el batch.
+    await fetch(SUPABASE_TABLE_ENDPOINT + "?on_conflict=client_id", {
       method: "POST",
       headers: {
         "apikey":        SUPABASE_KEY,
@@ -1405,10 +1408,17 @@ async function trySendOneReport(payload) {
     // FJ usa client_id determinístico (fj_<legajo>_<YYYY-MM-DD>) y merge-duplicates
     // para que un segundo Terminar Día del mismo día actualice (UPDATE) el FJ
     // anterior en vez de fallar con 409. Para todo lo demás, return=minimal normal.
-    const prefer = (payload.opcion === "FJ")
+    // IMPORTANTE: PostgREST necesita ?on_conflict=client_id en la URL para que
+    // el UPSERT use el UNIQUE constraint correcto (sin esto, asume el PK
+    // y el merge-duplicates no se aplica → 409).
+    const isFJ   = (payload.opcion === "FJ");
+    const url    = isFJ
+      ? SUPABASE_TABLE_ENDPOINT + "?on_conflict=client_id"
+      : SUPABASE_TABLE_ENDPOINT;
+    const prefer = isFJ
       ? "resolution=merge-duplicates,return=minimal"
       : "return=minimal";
-    const res = await fetch(SUPABASE_TABLE_ENDPOINT, {
+    const res = await fetch(url, {
       method: "POST",
       headers: {
         "apikey":        SUPABASE_KEY,
@@ -1541,7 +1551,7 @@ async function flushQueue() {
   }
 }
 
-const APP_VERSION = "v1.13";
+const APP_VERSION = "v1.14";
 
 function updatePendingIndicator() {
   const el = document.getElementById("pendingIndicator");
