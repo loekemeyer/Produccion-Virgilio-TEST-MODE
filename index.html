@@ -77,8 +77,23 @@ button {
 .box-title { font-size: 18px; font-weight: bold; }
 .box-desc { font-size: 10px; margin-top: 3px; }
 
-.top-bar { display: flex; align-items: center; margin-bottom: 6px; }
+.top-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .back-top { font-size: 28px; cursor: pointer; }
+
+/* Botón rojo "Terminar Día" en la barra superior de la pantalla de opciones */
+#btnTerminarDia{
+  background: #dc2626;
+  color: #fff;
+  border: 2px solid #991b1b;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 15px;
+  font-weight: bold;
+  cursor: pointer;
+  margin: 0;
+  width: auto;
+  line-height: 1;
+}
 
 .selected-container { display: flex; align-items: center; justify-content: center; margin-top: 16px; }
 .back-arrow { font-size: 32px; cursor: pointer; margin-right: 10px; }
@@ -166,8 +181,9 @@ button {
    así que sin esta regla el botón queda visible en la pantalla de tareas. */
 #btnHistDias.hidden { display: none; }
 
-/* Modal de historial de días anteriores */
-#histModal{
+/* Modales (historial de días anteriores y "Terminar Día") */
+#histModal,
+#terminarDiaModal{
   display: none;
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
@@ -178,7 +194,8 @@ button {
   padding: 24px 8px;
   overflow-y: auto;
 }
-#histModal.show{ display: flex; }
+#histModal.show,
+#terminarDiaModal.show{ display: flex; }
 .hist-modal-card{
   background: #fff;
   border-radius: 12px;
@@ -277,7 +294,7 @@ button {
 <button id="btnHistDias" title="Historial de días anteriores">📅</button>
 
 <!-- Badge de versión + estado de cola (abajo a la derecha) -->
-<div id="versionBadge">v1.8 ✓</div>
+<div id="versionBadge">v1.9 ✓</div>
 
 <!-- Modal: historial de días anteriores (oculto por defecto) -->
 <div id="histModal" onclick="if(event.target.id==='histModal') closeHistoryModal()">
@@ -287,6 +304,23 @@ button {
       <button class="hist-modal-close" onclick="closeHistoryModal()">Cerrar</button>
     </div>
     <div id="histModalContent"></div>
+  </div>
+</div>
+
+<!-- Modal: confirmación de "Terminar Día" -->
+<div id="terminarDiaModal" onclick="if(event.target.id==='terminarDiaModal') closeTerminarDia()">
+  <div class="hist-modal-card">
+    <div class="hist-modal-header">
+      <div class="hist-modal-title">Terminar día</div>
+      <button class="hist-modal-close" onclick="closeTerminarDia()">Cancelar</button>
+    </div>
+    <div id="terminarDiaContent"></div>
+    <button id="btnConfirmarTerminarDia" onclick="confirmarTerminarDia()"
+            style="background:#dc2626; color:#fff; border:2px solid #991b1b;
+                   border-radius:8px; margin-top:14px; padding:14px;
+                   font-size:18px; font-weight:bold; width:100%; cursor:pointer;">
+      Sí, terminar día
+    </button>
   </div>
 </div>
 
@@ -315,6 +349,7 @@ button {
 
   <div class="top-bar">
     <div class="back-top" onclick="backToLegajo()">←</div>
+    <button id="btnTerminarDia" onclick="terminarDia()">Terminar Día</button>
   </div>
 
   <div class="row row-6" id="row1"></div>
@@ -643,6 +678,171 @@ function openHistoryModal() {
 }
 function closeHistoryModal() {
   document.getElementById("histModal").classList.remove("show");
+}
+
+/* =========================================================
+   "TERMINAR DÍA" — modal de confirmación + ejecución
+   ========================================================= */
+
+/* Cuenta los reportes del día por opción para este legajo. */
+function getTodaySummaryForLegajo(legajo) {
+  const hist = readDayHist(getTodayKey(), String(legajo));
+  const counts = {};
+  for (const it of hist) {
+    counts[it.opcion] = (counts[it.opcion] || 0) + 1;
+  }
+  return { total: hist.length, counts };
+}
+
+/* Devuelve qué pendientes tiene el legajo, separados en
+   "sobreviven al día siguiente" vs "se cierran ahora". */
+function getPendingsForLegajo(legajo) {
+  const st = getLegajoState(legajo);
+  const sobreviven = [];
+  const seCierran  = [];
+  if (st.picking && st.picking.active) {
+    sobreviven.push({ tipo: "Picking", desc: "Picking en curso", valor: st.picking.value || "" });
+  }
+  if (st.armado && st.armado.active) {
+    sobreviven.push({ tipo: "Armado", desc: "Armado en curso", valor: st.armado.value || "" });
+  }
+  if (st.toggles) {
+    for (const code of Object.keys(st.toggles)) {
+      const item = { tipo: code, desc: desc[code] || "", valor: "" };
+      if (SURVIVING_TOGGLES.includes(code)) sobreviven.push(item);
+      else                                  seCierran.push(item);
+    }
+  }
+  return { sobreviven, seCierran };
+}
+
+function terminarDia() {
+  const legajoStr = String(legajoInput.value || "");
+  if (!legajoStr) { alert("Falta el número de legajo"); return; }
+
+  const summary  = getTodaySummaryForLegajo(legajoStr);
+  const pendings = getPendingsForLegajo(legajoStr);
+
+  const opcionesOrden = Object.keys(summary.counts).sort();
+  const summaryHtml = opcionesOrden.length
+    ? `<ul style="margin:6px 0 0 0; padding-left:20px;">
+         ${opcionesOrden.map(op =>
+           `<li><b>${escapeHtml(op)}</b> — ${escapeHtml(desc[op] || "")}: ${summary.counts[op]}</li>`).join("")}
+       </ul>`
+    : `<div class="history-empty">Sin reportes hoy.</div>`;
+
+  const sobrevivenHtml = pendings.sobreviven.length
+    ? `<ul style="margin:6px 0 0 0; padding-left:20px;">
+         ${pendings.sobreviven.map(p =>
+           `<li>${escapeHtml(p.tipo)}${p.valor ? ` <i>${escapeHtml(p.valor)}</i>` : ""}${p.desc ? ` — ${escapeHtml(p.desc)}` : ""}</li>`).join("")}
+       </ul>`
+    : "<div style='color:#666; font-size:14px;'>Ninguno.</div>";
+
+  const seCierranHtml = pendings.seCierran.length
+    ? `<ul style="margin:6px 0 0 0; padding-left:20px;">
+         ${pendings.seCierran.map(p =>
+           `<li><b>${escapeHtml(p.tipo)}</b> — ${escapeHtml(p.desc)}</li>`).join("")}
+       </ul>`
+    : "<div style='color:#666; font-size:14px;'>Ninguno.</div>";
+
+  const html = `
+    <div style="margin-bottom:14px;">
+      <b>Legajo:</b> ${escapeHtml(legajoStr)}<br>
+      <b>Reportes hechos hoy:</b> ${summary.total}
+      ${summaryHtml}
+    </div>
+
+    <div style="margin-bottom:14px; padding:10px; background:#f0f9ff; border-radius:8px;">
+      <b style="color:#075985;">⏸ Continúan al día siguiente:</b>
+      ${sobrevivenHtml}
+    </div>
+
+    <div style="padding:10px; background:#fef2f2; border-radius:8px;">
+      <b style="color:#991b1b;">⛔ Se cierran ahora:</b>
+      ${seCierranHtml}
+    </div>
+  `;
+
+  document.getElementById("terminarDiaContent").innerHTML = html;
+  document.getElementById("terminarDiaModal").classList.add("show");
+}
+
+function closeTerminarDia() {
+  document.getElementById("terminarDiaModal").classList.remove("show");
+}
+
+async function confirmarTerminarDia() {
+  const legajoStr = String(legajoInput.value || "");
+  if (!legajoStr) { closeTerminarDia(); return; }
+
+  // Capturar pendientes ANTES de tocar el estado, así el resumen y la
+  // limpieza son consistentes.
+  const summary = getTodaySummaryForLegajo(legajoStr);
+  const st = getLegajoState(legajoStr);
+
+  const nowMs  = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+
+  // 1) Auto-cerrar TODOS los toggles no-sobrevivientes con ts_cliente = ahora.
+  //    NO usamos enqueueAutoClose (que pone ts_cliente=17:00) porque acá el
+  //    operario está cerrando manualmente, en este momento.
+  if (st.toggles) {
+    for (const code of Object.keys(st.toggles)) {
+      if (SURVIVING_TOGGLES.includes(code)) continue;
+      const cur = st.toggles[code];
+      const tsInicioIso = (typeof cur === "string") ? cur : null;
+      const closeId = nowMs.toString(36) + "_fjclose_" + code + "_" + Math.random().toString(36).slice(2, 6);
+      const closePayload = {
+        legajo: legajoStr,
+        opcion: code,
+        descripcion: desc[code] || "",
+        texto: "",
+        ts: nowMs,
+        id: closeId,
+        ts_inicio_iso: tsInicioIso
+      };
+      pushHistoryForLegajo(legajoStr, {
+        ts: nowMs, opcion: code, descripcion: closePayload.descripcion,
+        texto: "", id: closeId, status: "queued"
+      });
+      enqueueReport(closePayload);
+      delete st.toggles[code];
+    }
+    setLegajoState(legajoStr, st);
+  }
+
+  // 2) Reporte FJ "Fin de Jornada" con resumen del día como JSON en texto.
+  const fjId = nowMs.toString(36) + "_fj_" + Math.random().toString(36).slice(2, 6);
+  const fjTexto = JSON.stringify(summary.counts);
+  const fjPayload = {
+    legajo: legajoStr,
+    opcion: "FJ",
+    descripcion: "Fin de Jornada",
+    texto: fjTexto,
+    ts: nowMs,
+    id: fjId,
+    ts_inicio_iso: null
+  };
+  pushHistoryForLegajo(legajoStr, {
+    ts: nowMs, opcion: "FJ", descripcion: "Fin de Jornada",
+    texto: fjTexto, id: fjId, status: "queued"
+  });
+  enqueueReport(fjPayload);
+
+  // 3) Forzar flush ahora — antes de que el operario cierre el celular.
+  flushQueue();
+
+  // 4) Cerrar modal + volver a pantalla de legajo. NO se borra el legajo
+  //    guardado: si mañana vuelve el mismo operario, ya lo tiene precargado.
+  closeTerminarDia();
+  resetSelection();
+  optionsScreen.classList.add("hidden");
+  legajoScreen.classList.remove("hidden");
+  document.getElementById("btnHistDias")?.classList.remove("hidden");
+  renderLegajoHistory(legajoInput.value);
+  updateCoreButtonsState();
+  renderPendingSuggestion();
+  updatePendingIndicator();
 }
 
 /* Live render historial al tipear legajo */
@@ -1244,7 +1444,7 @@ async function flushQueue() {
   }
 }
 
-const APP_VERSION = "v1.8";
+const APP_VERSION = "v1.9";
 
 function updatePendingIndicator() {
   const el = document.getElementById("pendingIndicator");
