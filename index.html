@@ -298,7 +298,7 @@ button {
 <button id="btnHistDias" title="Historial de días anteriores">📅</button>
 
 <!-- Badge de versión + estado de cola (abajo a la derecha) -->
-<div id="versionBadge">v1.11 ✓</div>
+<div id="versionBadge">v1.12 ✓</div>
 
 <!-- Modal: historial de días anteriores (oculto por defecto) -->
 <div id="histModal" onclick="if(event.target.id==='histModal') closeHistoryModal()">
@@ -508,6 +508,15 @@ function writeDayHist(fecha, legajo, arr) {
 }
 function pushHistoryForLegajo(legajo, item) {
   pushHistoryForLegajoOnDay(legajo, getTodayKey(), item);
+}
+/* Saca del historial de HOY todos los items con cierta opción. Lo usa
+   confirmarTerminarDia para limpiar FJ previas (de v1.10/v1.11 con id
+   random, o de la misma versión cuando se cierra el día por segunda
+   vez) antes de pushear la nueva. */
+function removeHistoryItemsByOpcionForToday(legajo, opcion) {
+  const fecha = getTodayKey();
+  const arr   = readDayHist(fecha, legajo).filter(it => it.opcion !== opcion);
+  writeDayHist(fecha, legajo, arr);
 }
 /* Idem pero escribiendo en la fecha que se pase explícitamente.
    Lo usa el auto-cierre, que escribe en la fecha en que se abrió el toggle. */
@@ -759,7 +768,21 @@ function terminarDia() {
        </ul>`
     : "<div style='color:#666; font-size:14px;'>Ninguno.</div>";
 
+  // Detectar si ya hubo un FJ hoy: bandera para mostrar advertencia.
+  const prevFJ = readDayHist(getTodayKey(), legajoStr).find(it => it.opcion === "FJ");
+  const warnHtml = prevFJ
+    ? `<div style="margin-bottom:14px; padding:10px; background:#fef9c3;
+                   border:2px solid #ca8a04; border-radius:8px;">
+         <b style="color:#854d0e;">⚠ Ya cerraste el día hoy${
+           prevFJ.ts ? ` a las ${escapeHtml(formatDateTime(prevFJ.ts).split(" ")[1] || "")}` : ""
+         }.</b><br>
+         Si confirmás, se va a <b>reemplazar</b> el reporte anterior con uno nuevo
+         (queda una sola fila por día por legajo en el servidor).
+       </div>`
+    : "";
+
   const html = `
+    ${warnHtml}
     <div style="margin-bottom:14px;">
       <b>Legajo:</b> ${escapeHtml(legajoStr)}<br>
       <b>Reportes hechos hoy:</b> ${summary.total}
@@ -876,7 +899,10 @@ async function confirmarTerminarDia() {
   }
 
   // 2) Reporte FJ "Fin de Jornada" con resumen del día como JSON en texto.
-  const fjId = nowMs.toString(36) + "_fj_" + Math.random().toString(36).slice(2, 6);
+  //    client_id DETERMINÍSTICO por (legajo, día) -> si tocan Terminar Día
+  //    dos veces el mismo día, el server hace UPDATE (merge-duplicates)
+  //    en vez de insertar otra fila. Una sola FJ por día por legajo.
+  const fjId    = "fj_" + legajoStr + "_" + getTodayKey();
   const fjTexto = JSON.stringify(summary.counts);
   const fjPayload = {
     legajo: legajoStr,
@@ -887,6 +913,10 @@ async function confirmarTerminarDia() {
     id: fjId,
     ts_inicio_iso: null
   };
+  // Si ya había una FJ de hoy en el historial local (de este Terminar Día
+  // o de uno previo con id random pre-v1.12), la sacamos antes de pushear
+  // la nueva, así queda una sola entrada de FJ en el historial local.
+  removeHistoryItemsByOpcionForToday(legajoStr, "FJ");
   pushHistoryForLegajo(legajoStr, {
     ts: nowMs, opcion: "FJ", descripcion: "Fin de Jornada",
     texto: fjTexto, id: fjId, status: "queued"
@@ -1373,16 +1403,19 @@ async function trySendOneReport(payload) {
     // Corte duro a los 12s para no quedarnos esperando si la red se cuelga.
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 12000);
+    // FJ usa client_id determinístico (fj_<legajo>_<YYYY-MM-DD>) y merge-duplicates
+    // para que un segundo Terminar Día del mismo día actualice (UPDATE) el FJ
+    // anterior en vez de fallar con 409. Para todo lo demás, return=minimal normal.
+    const prefer = (payload.opcion === "FJ")
+      ? "resolution=merge-duplicates,return=minimal"
+      : "return=minimal";
     const res = await fetch(SUPABASE_TABLE_ENDPOINT, {
       method: "POST",
       headers: {
         "apikey":        SUPABASE_KEY,
         "Authorization": "Bearer " + SUPABASE_KEY,
         "Content-Type":  "application/json",
-        "Prefer":        "return=minimal"  // anon NO tiene SELECT en RLS; pedir
-                                            // return=representation hace que el
-                                            // server devuelva 4xx aunque el INSERT
-                                            // en sí esté bien. Mantener minimal.
+        "Prefer":        prefer
       },
       body: JSON.stringify({
         client_id:   payload.id,                              // UNIQUE en la tabla -> dedup
@@ -1509,7 +1542,7 @@ async function flushQueue() {
   }
 }
 
-const APP_VERSION = "v1.11";
+const APP_VERSION = "v1.12";
 
 function updatePendingIndicator() {
   const el = document.getElementById("pendingIndicator");
